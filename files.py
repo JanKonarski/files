@@ -16,7 +16,8 @@ def analyze_file(filepath):
 #        "executable": False,
 #        "architecture": None,
 #        "os": None
-        "result": None
+        "result": None,
+        "size": None
     }
 
     # binary analysis
@@ -48,6 +49,8 @@ def analyze_file(filepath):
 
         file_info["result"] = result.stdout.strip()
         file_info["mime"] = mime.stdout.strip()
+        file_size_bytes = os.path.getsize(filepath)
+        file_info["size_kb"] = (file_size_bytes + 1023) // 1024
     except Exception as e:
         print(f"Error analyzing file {filepath}: {e}")
         pass
