@@ -17,7 +17,7 @@ def analyze_file(filepath):
 #        "architecture": None,
 #        "os": None
         "result": None,
-        "size": None
+        "size_kb": None
     }
 
     # binary analysis
