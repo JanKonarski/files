@@ -4,6 +4,7 @@ import uuid
 import json
 import mimetypes
 import lief
+import subprocess
 
 
 def analyze_file(filepath):
@@ -12,20 +13,46 @@ def analyze_file(filepath):
         "uuid": str(uuid.uuid4()),
         "name": os.path.basename(filepath),
         "mime": mimetypes.guess_type(filepath)[0] or "unknown",
-        "executable": False,
-        "architecture": None,
-        "os": None
+#        "executable": False,
+#        "architecture": None,
+#        "os": None
+        "result": None
     }
 
     # binary analysis
     try:
-        binary = lief.parse(filepath)
-        if binary:
-            file_info["executable"] = True
-            file_info["architecture"] = str(binary.header.machine_type)
-            file_info["os"] = binary.format.name.lower()
-    except:
+# #        lief.Logger.disable()
+#         lief.PE.ParserConfig.quick_mode = False
+#         lief.PE.ParserConfig.parse_dos_stub = True
+#         lief.PE.ParserConfig.force_overlay = True
+#
+#         binary = lief.parse(filepath)
+#         if binary:
+#             file_info["executable"] = True
+#             file_info["architecture"] = str(binary.header.machine_type)
+#             file_info["os"] = binary.format.name.lower()
+
+        mime = subprocess.run(
+            ['file', "--mime-type", "-b", filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        result = subprocess.run(
+            ['file', '-b', filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        file_info["result"] = result.stdout.strip()
+        file_info["mime"] = mime.stdout.strip()
+    except Exception as e:
+        print(f"Error analyzing file {filepath}: {e}")
         pass
+
+
 
     return file_info
 
