@@ -2,73 +2,100 @@ import os
 import sys
 import uuid
 import json
-import mimetypes
-import lief
+#import mimetypes
+#import lief
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+class FileAnalyzer:
+    def analyze(self, filepath):
+        """Analyze file by running 'file' command."""
+        try:
+            result = subprocess.run(
+                ["file", "-b", filepath],
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except Exception as e:
+            print(f"Error analyzing file {filepath}: {e}")
+            return None
 
-def analyze_file(filepath):
+    def analyze_mime(self, filepath):
+        """Analyze file mime type."""
+        try:
+            result = subprocess.run(
+                ["file", "--mime-type", "-b", filepath],
+                text=True,
+                capture_output=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except Exception as e:
+            print(f"Error analyzing file {filepath}: {e}")
+            return None
+
+    def close(self):
+        """Terminate the 'file' process."""
+        if self.process:
+            self.process.stdin.close()
+            self.process.terminate()
+            self.process.wait()
+
+        if self.process_mime:
+            self.process_mime.stdin.close()
+            self.process_mime.terminate()
+            self.process_mime.wait()
+
+def analyze_file(filepath, file_analyzer):
     """Return dictionary od file information"""
     file_info = {
         "uuid": str(uuid.uuid4()),
         "name": os.path.basename(filepath),
-        "mime": mimetypes.guess_type(filepath)[0] or "unknown",
-#        "executable": False,
-#        "architecture": None,
-#        "os": None
+        "mime": "unknown",
         "result": None,
-        "size_kb": None
+        "size_b": None
     }
 
     # binary analysis
     try:
-# #        lief.Logger.disable()
-#         lief.PE.ParserConfig.quick_mode = False
-#         lief.PE.ParserConfig.parse_dos_stub = True
-#         lief.PE.ParserConfig.force_overlay = True
-#
-#         binary = lief.parse(filepath)
-#         if binary:
-#             file_info["executable"] = True
-#             file_info["architecture"] = str(binary.header.machine_type)
-#             file_info["os"] = binary.format.name.lower()
-
-        mime = subprocess.run(
-            ['file', "--mime-type", "-b", filepath],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        result = subprocess.run(
-            ['file', '-b', filepath],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        file_info["result"] = result.stdout.strip()
-        file_info["mime"] = mime.stdout.strip()
+        file_info["result"] = file_analyzer.analyze(filepath)
+        file_info["mime"] = file_analyzer.analyze_mime(filepath)
         file_size_bytes = os.path.getsize(filepath)
-        file_info["size_kb"] = (file_size_bytes + 1023) // 1024
+        file_info["size_b"] = (file_size_bytes + 1023)
     except Exception as e:
-        print(f"Error analyzing file {filepath}: {e}")
+        print(e)
         pass
-
-
 
     return file_info
 
 
-def process_directory(directory, output_directory):
-    """Process directory and create JSON description file"""
+def process_directory(directory, output_directory, file_analyzer, max_threads=4):
+    """Process directory with multithreading and create JSON description file."""
     metadata = []
     directory_name = os.path.basename(directory)
 
-    for root, _, files in os.walk(directory):
-        for file in files:
-            filepath = os.path.join(root, file)
-            metadata.append(analyze_file(filepath))
+    # Get the list of files in the directory
+    filepaths = [
+        os.path.join(root, file)
+        for root, _, files in os.walk(directory)
+        for file in files
+    ]
+
+    # Use ThreadPoolExecutor to process files in parallel
+    with ThreadPoolExecutor(max_threads) as executor:
+        future_to_file = {
+            executor.submit(analyze_file, filepath, file_analyzer): filepath
+            for filepath in filepaths
+        }
+
+        for future in as_completed(future_to_file):
+            try:
+                file_info = future.result()
+                metadata.append(file_info)
+            except Exception as e:
+                print(f"Error processing file: {e}")
 
     output_file = os.path.join(output_directory, f"{directory_name}.json")
     with open(output_file, "w", encoding="utf-8") as json_file:
@@ -77,18 +104,28 @@ def process_directory(directory, output_directory):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print("Use: python3 script.py <path>")
         sys.exit(1)
 
     base_directory = sys.argv[1]
+    max_threads = int(sys.argv[2])
+
     if not os.path.isdir(base_directory):
+        print(f"Error: {base_directory} is not a valid directory.")
         sys.exit(1)
 
     output_directory = os.getcwd()
 
-    for subdir in os.listdir(base_directory):
-        subdir_path = os.path.join(base_directory, subdir)
-        if os.path.isdir(subdir_path):
-            print(f"Processing directory: {subdir_path}")
-            process_directory(subdir_path, output_directory)
+    # Initialize the persistent file analyzer
+    file_analyzer = FileAnalyzer()
+
+    try:
+        for subdir in os.listdir(base_directory):
+            subdir_path = os.path.join(base_directory, subdir)
+            if os.path.isdir(subdir_path):
+                print(f"Processing directory: {subdir_path} with {max_threads} threads")
+                process_directory(subdir_path, output_directory, file_analyzer, max_threads)
+    finally:
+        # Ensure the file analyzer process is closed
+        file_analyzer.close()
